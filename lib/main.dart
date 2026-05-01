@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:test_pigeon_app/pigeon/pigeon.g.dart';
 
 void main() {
   runApp(const MyApp());
@@ -30,15 +31,13 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  static const methodChannel = MethodChannel('samples.flutter.dev/battery');
 
   String _batteryLevel = '';
 
   Future<void> _getBatteryLevel() async {
+    final api = BatteryApi();
     try {
-      final int level =
-          await methodChannel.invokeMethod<int>('getBatteryLevel') ?? -1;
-
+      final int level = await api.getBatteryLevel();
       setState(() {
         _batteryLevel = 'Battery level: $level%';
       });

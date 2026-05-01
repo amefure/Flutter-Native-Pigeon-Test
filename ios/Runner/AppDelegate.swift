@@ -1,6 +1,23 @@
 import Flutter
 import UIKit
 
+// FlutterErrorをSwiftのErrorとして扱えるように拡張
+extension FlutterError: Error {}
+
+// 生成されたプロトコルを実装するクラスを作成
+class BatteryApiImpl: BatteryApi {
+    func getBatteryLevel() throws -> Int64 {
+        let device = UIDevice.current
+        device.isBatteryMonitoringEnabled = true
+
+        if device.batteryState == .unknown {
+            throw FlutterError(code: "UNAVAILABLE", message: "Battery level not available.", details: nil)
+        }
+        let batteryLevel = device.batteryLevel
+        return Int64(batteryLevel * 100)
+    }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let channelName = "samples.flutter.dev/battery"
@@ -8,35 +25,13 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    
+    let controller = window?.rootViewController as! FlutterViewController
+    let api = BatteryApiImpl()
+    BatteryApiSetup.setUp(binaryMessenger: controller.binaryMessenger, api: api)
+    
     GeneratedPluginRegistrant.register(with: self)
 
-    // ここから
-    let controller = window?.rootViewController as! FlutterViewController
-
-    let batteryChannel = FlutterMethodChannel(
-        name: channelName,
-        binaryMessenger: controller.binaryMessenger
-    )
-
-    batteryChannel.setMethodCallHandler { (call, result) in
-        if call.method == "getBatteryLevel" {
-            let level = self.getBatteryLevel()
-            if true {
-                result(level)
-            } else {
-                result(FlutterError(code: "UNAVAILABLE", message: "Battery IOS info unavailable", details: nil))
-            }
-        } else {
-            result(FlutterMethodNotImplemented)
-        }
-    }
-
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  private func getBatteryLevel() -> Int {
-      UIDevice.current.isBatteryMonitoringEnabled = true
-      let batteryLevel = UIDevice.current.batteryLevel
-      return Int(batteryLevel * 100)
   }
 }
