@@ -17,13 +17,21 @@ class BatteryObserver {
         // バッテリー残量が変化した時の通知を登録
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(batteryLevelDidChange),
+            selector: #selector(batteryInfoDidChange),
             name: UIDevice.batteryLevelDidChangeNotification,
+            object: nil
+        )
+        
+        // 2. バッテリー「状態（充電中など）」の変化を監視
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(batteryInfoDidChange),
+            name: UIDevice.batteryStateDidChangeNotification,
             object: nil
         )
     }
     
-    @objc private func batteryLevelDidChange(notification: Notification) {
+    @objc private func batteryInfoDidChange(notification: Notification) {
         let api = BatteryApiImpl()
         guard let info = try? api.getBatteryInfo() else { return }
         flutterApi.onBatteryInfoChanged(info: info) { _ in }
