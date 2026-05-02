@@ -35,6 +35,130 @@ Object? _extractReplyValueOrThrow(
 }
 
 
+List<Object?> wrapResponse({Object? result, PlatformException? error, bool empty = false}) {
+  if (empty) {
+    return <Object?>[];
+  }
+  if (error == null) {
+    return <Object?>[result];
+  }
+  return <Object?>[error.code, error.message, error.details];
+}
+bool _deepEquals(Object? a, Object? b) {
+  if (identical(a, b)) {
+    return true;
+  }
+  if (a is double && b is double) {
+    if (a.isNaN && b.isNaN) {
+      return true;
+    }
+    return a == b;
+  }
+  if (a is List && b is List) {
+    return a.length == b.length &&
+        a.indexed
+            .every(((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]));
+  }
+  if (a is Map && b is Map) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (final MapEntry<Object?, Object?> entryA in a.entries) {
+      bool found = false;
+      for (final MapEntry<Object?, Object?> entryB in b.entries) {
+        if (_deepEquals(entryA.key, entryB.key)) {
+          if (_deepEquals(entryA.value, entryB.value)) {
+            found = true;
+            break;
+          } else {
+            return false;
+          }
+        }
+      }
+      if (!found) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return a == b;
+}
+
+int _deepHash(Object? value) {
+  if (value is List) {
+    return Object.hashAll(value.map(_deepHash));
+  }
+  if (value is Map) {
+    int result = 0;
+    for (final MapEntry<Object?, Object?> entry in value.entries) {
+      result += (_deepHash(entry.key) * 31) ^ _deepHash(entry.value);
+    }
+    return result;
+  }
+  if (value is double && value.isNaN) {
+    // Normalize NaN to a consistent hash.
+    return 0x7FF8000000000000.hashCode;
+  }
+  if (value is double && value == 0.0) {
+    // Normalize -0.0 to 0.0 so they have the same hash code.
+    return 0.0.hashCode;
+  }
+  return value.hashCode;
+}
+
+
+enum ChargingState {
+  charging,
+  discharging,
+  full,
+  unknown,
+}
+
+class BatteryInfo {
+  BatteryInfo({
+    required this.level,
+    required this.state,
+  });
+
+  int level;
+
+  ChargingState state;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      level,
+      state,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static BatteryInfo decode(Object result) {
+    result as List<Object?>;
+    return BatteryInfo(
+      level: result[0]! as int,
+      state: result[1]! as ChargingState,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! BatteryInfo || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(level, other.level) && _deepEquals(state, other.state);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+}
+
 
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
@@ -43,6 +167,12 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
+    }    else if (value is ChargingState) {
+      buffer.putUint8(129);
+      writeValue(buffer, value.index);
+    }    else if (value is BatteryInfo) {
+      buffer.putUint8(130);
+      writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
     }
@@ -51,6 +181,11 @@ class _PigeonCodec extends StandardMessageCodec {
   @override
   Object? readValueOfType(int type, ReadBuffer buffer) {
     switch (type) {
+      case 129:
+        final value = readValue(buffer) as int?;
+        return value == null ? null : ChargingState.values[value];
+      case 130:
+        return BatteryInfo.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }
@@ -70,8 +205,8 @@ class BatteryApi {
 
   final String pigeonVar_messageChannelSuffix;
 
-  Future<int> getBatteryLevel() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.test_pigeon_app.BatteryApi.getBatteryLevel$pigeonVar_messageChannelSuffix';
+  Future<BatteryInfo> getBatteryInfo() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.test_pigeon_app.BatteryApi.getBatteryInfo$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -86,6 +221,37 @@ class BatteryApi {
         isNullValid: false,
     )
     ;
-    return pigeonVar_replyValue! as int;
+    return pigeonVar_replyValue! as BatteryInfo;
+  }
+}
+
+abstract class BatteryFlutterApi {
+  static const MessageCodec<Object?> pigeonChannelCodec = _PigeonCodec();
+
+  void onBatteryInfoChanged(BatteryInfo info);
+
+  static void setUp(BatteryFlutterApi? api, {BinaryMessenger? binaryMessenger, String messageChannelSuffix = '',}) {
+    messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
+    {
+      final pigeonVar_channel = BasicMessageChannel<Object?>(
+          'dev.flutter.pigeon.test_pigeon_app.BatteryFlutterApi.onBatteryInfoChanged$messageChannelSuffix', pigeonChannelCodec,
+          binaryMessenger: binaryMessenger);
+      if (api == null) {
+        pigeonVar_channel.setMessageHandler(null);
+      } else {
+        pigeonVar_channel.setMessageHandler((Object? message) async {
+          final List<Object?> args = message! as List<Object?>;
+          final BatteryInfo arg_info = args[0]! as BatteryInfo;
+          try {
+            api.onBatteryInfoChanged(arg_info);
+            return wrapResponse(empty: true);
+          } on PlatformException catch (e) {
+            return wrapResponse(error: e);
+          }          catch (e) {
+            return wrapResponse(error: PlatformException(code: 'error', message: e.toString()));
+          }
+        });
+      }
+    }
   }
 }

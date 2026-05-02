@@ -55,6 +55,10 @@ private func wrapError(_ error: Any) -> [Any?] {
   ]
 }
 
+private func createConnectionError(withChannelName channelName: String) -> PigeonError {
+  return PigeonError(code: "channel-error", message: "Unable to establish connection on channel: '\(channelName)'.", details: "")
+}
+
 private func isNullish(_ value: Any?) -> Bool {
   return value is NSNull || value == nil
 }
@@ -64,11 +68,188 @@ private func nilOrValue<T>(_ value: Any?) -> T? {
   return value as! T?
 }
 
+private func doubleEqualsPigeon(_ lhs: Double, _ rhs: Double) -> Bool {
+  return (lhs.isNaN && rhs.isNaN) || lhs == rhs
+}
+
+private func doubleHashPigeon(_ value: Double, _ hasher: inout Hasher) {
+  if value.isNaN {
+    hasher.combine(0x7FF8000000000000)
+  } else {
+    // Normalize -0.0 to 0.0
+    hasher.combine(value == 0 ? 0 : value)
+  }
+}
+
+func deepEqualsPigeon(_ lhs: Any?, _ rhs: Any?) -> Bool {
+  let cleanLhs = nilOrValue(lhs) as Any?
+  let cleanRhs = nilOrValue(rhs) as Any?
+  switch (cleanLhs, cleanRhs) {
+  case (nil, nil):
+    return true
+
+  case (nil, _), (_, nil):
+    return false
+
+  case (let lhs as AnyObject, let rhs as AnyObject) where lhs === rhs:
+    return true
+
+  case is (Void, Void):
+    return true
+
+  case (let lhsArray, let rhsArray) as ([Any?], [Any?]):
+    guard lhsArray.count == rhsArray.count else { return false }
+    for (index, element) in lhsArray.enumerated() {
+      if !deepEqualsPigeon(element, rhsArray[index]) {
+        return false
+      }
+    }
+    return true
+
+  case (let lhsArray, let rhsArray) as ([Double], [Double]):
+    guard lhsArray.count == rhsArray.count else { return false }
+    for (index, element) in lhsArray.enumerated() {
+      if !doubleEqualsPigeon(element, rhsArray[index]) {
+        return false
+      }
+    }
+    return true
+
+  case (let lhsDictionary, let rhsDictionary) as ([AnyHashable: Any?], [AnyHashable: Any?]):
+    guard lhsDictionary.count == rhsDictionary.count else { return false }
+    for (lhsKey, lhsValue) in lhsDictionary {
+      var found = false
+      for (rhsKey, rhsValue) in rhsDictionary {
+        if deepEqualsPigeon(lhsKey, rhsKey) {
+          if deepEqualsPigeon(lhsValue, rhsValue) {
+            found = true
+            break
+          } else {
+            return false
+          }
+        }
+      }
+      if !found { return false }
+    }
+    return true
+
+  case (let lhs as Double, let rhs as Double):
+    return doubleEqualsPigeon(lhs, rhs)
+
+  case (let lhsHashable, let rhsHashable) as (AnyHashable, AnyHashable):
+    return lhsHashable == rhsHashable
+
+  default:
+    return false
+  }
+}
+
+func deepHashPigeon(value: Any?, hasher: inout Hasher) {
+  let cleanValue = nilOrValue(value) as Any?
+  if let cleanValue = cleanValue {
+    if let doubleValue = cleanValue as? Double {
+      doubleHashPigeon(doubleValue, &hasher)
+    } else if let valueList = cleanValue as? [Any?] {
+      for item in valueList {
+        deepHashPigeon(value: item, hasher: &hasher)
+      }
+    } else if let valueList = cleanValue as? [Double] {
+      for item in valueList {
+        doubleHashPigeon(item, &hasher)
+      }
+    } else if let valueDict = cleanValue as? [AnyHashable: Any?] {
+      var result = 0
+      for (key, value) in valueDict {
+        var entryKeyHasher = Hasher()
+        deepHashPigeon(value: key, hasher: &entryKeyHasher)
+        var entryValueHasher = Hasher()
+        deepHashPigeon(value: value, hasher: &entryValueHasher)
+        result = result &+ ((entryKeyHasher.finalize() &* 31) ^ entryValueHasher.finalize())
+      }
+      hasher.combine(result)
+    } else if let hashableValue = cleanValue as? AnyHashable {
+      hasher.combine(hashableValue)
+    } else {
+      hasher.combine(String(describing: cleanValue))
+    }
+  } else {
+    hasher.combine(0)
+  }
+}
+
+
+enum ChargingState: Int {
+  case charging = 0
+  case discharging = 1
+  case full = 2
+  case unknown = 3
+}
+
+/// Generated class from Pigeon that represents data sent in messages.
+struct BatteryInfo: Hashable {
+  var level: Int64
+  var state: ChargingState
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> BatteryInfo? {
+    let level = pigeonVar_list[0] as! Int64
+    let state = pigeonVar_list[1] as! ChargingState
+
+    return BatteryInfo(
+      level: level,
+      state: state
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      level,
+      state,
+    ]
+  }
+  static func == (lhs: BatteryInfo, rhs: BatteryInfo) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return deepEqualsPigeon(lhs.level, rhs.level) && deepEqualsPigeon(lhs.state, rhs.state)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("BatteryInfo")
+    deepHashPigeon(value: level, hasher: &hasher)
+    deepHashPigeon(value: state, hasher: &hasher)
+  }
+}
 
 private class PigeonPigeonCodecReader: FlutterStandardReader {
+  override func readValue(ofType type: UInt8) -> Any? {
+    switch type {
+    case 129:
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return ChargingState(rawValue: enumResultAsInt)
+      }
+      return nil
+    case 130:
+      return BatteryInfo.fromList(self.readValue() as! [Any?])
+    default:
+      return super.readValue(ofType: type)
+    }
+  }
 }
 
 private class PigeonPigeonCodecWriter: FlutterStandardWriter {
+  override func writeValue(_ value: Any) {
+    if let value = value as? ChargingState {
+      super.writeByte(129)
+      super.writeValue(value.rawValue)
+    } else if let value = value as? BatteryInfo {
+      super.writeByte(130)
+      super.writeValue(value.toList())
+    } else {
+      super.writeValue(value)
+    }
+  }
 }
 
 private class PigeonPigeonCodecReaderWriter: FlutterStandardReaderWriter {
@@ -87,7 +268,7 @@ class PigeonPigeonCodec: FlutterStandardMessageCodec, @unchecked Sendable {
 
 /// Generated protocol from Pigeon that represents a handler of messages from Flutter.
 protocol BatteryApi {
-  func getBatteryLevel() throws -> Int64
+  func getBatteryInfo() throws -> BatteryInfo
 }
 
 /// Generated setup class from Pigeon to handle messages through the `binaryMessenger`.
@@ -96,18 +277,51 @@ class BatteryApiSetup {
   /// Sets up an instance of `BatteryApi` to handle messages through the `binaryMessenger`.
   static func setUp(binaryMessenger: FlutterBinaryMessenger, api: BatteryApi?, messageChannelSuffix: String = "") {
     let channelSuffix = messageChannelSuffix.count > 0 ? ".\(messageChannelSuffix)" : ""
-    let getBatteryLevelChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.test_pigeon_app.BatteryApi.getBatteryLevel\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    let getBatteryInfoChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.test_pigeon_app.BatteryApi.getBatteryInfo\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
-      getBatteryLevelChannel.setMessageHandler { _, reply in
+      getBatteryInfoChannel.setMessageHandler { _, reply in
         do {
-          let result = try api.getBatteryLevel()
+          let result = try api.getBatteryInfo()
           reply(wrapResult(result))
         } catch {
           reply(wrapError(error))
         }
       }
     } else {
-      getBatteryLevelChannel.setMessageHandler(nil)
+      getBatteryInfoChannel.setMessageHandler(nil)
+    }
+  }
+}
+/// Generated protocol from Pigeon that represents Flutter messages that can be called from Swift.
+protocol BatteryFlutterApiProtocol {
+  func onBatteryInfoChanged(info infoArg: BatteryInfo, completion: @escaping (Result<Void, PigeonError>) -> Void)
+}
+class BatteryFlutterApi: BatteryFlutterApiProtocol {
+  private let binaryMessenger: FlutterBinaryMessenger
+  private let messageChannelSuffix: String
+  init(binaryMessenger: FlutterBinaryMessenger, messageChannelSuffix: String = "") {
+    self.binaryMessenger = binaryMessenger
+    self.messageChannelSuffix = messageChannelSuffix.count > 0 ? ".\(messageChannelSuffix)" : ""
+  }
+  var codec: PigeonPigeonCodec {
+    return PigeonPigeonCodec.shared
+  }
+  func onBatteryInfoChanged(info infoArg: BatteryInfo, completion: @escaping (Result<Void, PigeonError>) -> Void) {
+    let channelName: String = "dev.flutter.pigeon.test_pigeon_app.BatteryFlutterApi.onBatteryInfoChanged\(messageChannelSuffix)"
+    let channel = FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: codec)
+    channel.sendMessage([infoArg] as [Any?]) { response in
+      guard let listResponse = response as? [Any?] else {
+        completion(.failure(createConnectionError(withChannelName: channelName)))
+        return
+      }
+      if listResponse.count > 1 {
+        let code: String = listResponse[0] as! String
+        let message: String? = nilOrValue(listResponse[1])
+        let details: String? = nilOrValue(listResponse[2])
+        completion(.failure(PigeonError(code: code, message: message, details: details)))
+      } else {
+        completion(.success(()))
+      }
     }
   }
 }

@@ -9,8 +9,28 @@ import 'package:pigeon/pigeon.dart';
   dartPackageName: 'test_pigeon_app'
 ))
 
-// ネイティブ側にリクエストするメソッドを定義
+enum ChargingState {
+  charging,
+  discharging,
+  full,
+  unknown,
+}
+
+// 情報をまとめるクラス
+class BatteryInfo {
+  int level;
+  ChargingState state;
+  BatteryInfo({required this.level, required this.state});
+}
+
+// Flutter -> ネイティブ
 @HostApi()
 abstract class BatteryApi {
-  int getBatteryLevel();
+  BatteryInfo getBatteryInfo();
+}
+
+// ネイティブ -> Flutter
+@FlutterApi()
+abstract class BatteryFlutterApi {
+  void onBatteryInfoChanged(BatteryInfo info);
 }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:test_pigeon_app/pigeon/pigeon.g.dart';
 
 void main() {
@@ -16,60 +15,75 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: .fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const BatteryPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
 
-  final String title;
+class BatteryPage extends StatefulWidget {
+  const BatteryPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<BatteryPage> createState() => _BatteryPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+// BatteryFlutterApi（ネイティブからの通知）を受けるための実装
+class MyBatteryHandler implements BatteryFlutterApi {
+  final Function(BatteryInfo) onUpdate;
+  MyBatteryHandler(this.onUpdate);
 
-  String _batteryLevel = '';
+  @override
+  void onBatteryInfoChanged(BatteryInfo info) {
+    onUpdate(info);
+  }
+}
 
-  Future<void> _getBatteryLevel() async {
-    final api = BatteryApi();
-    try {
-      final int level = await api.getBatteryLevel();
-      setState(() {
-        _batteryLevel = 'Battery level: $level%';
-      });
-    } on PlatformException catch (e) {
-      setState(() {
-        _batteryLevel = "Error: ${e.message}";
-      });
-    }
+class _BatteryPageState extends State<BatteryPage> {
+  BatteryInfo? _batteryInfo = null;
+  final _hostApi = BatteryApi();
+
+  @override
+  void initState() {
+    super.initState();
+    // ネイティブからの通知を待ち受ける設定
+    BatteryFlutterApi.setUp(MyBatteryHandler((info) {
+      setState(() => _batteryInfo = info);
+    }));
+
+    // 初期値を取得
+    _refreshBattery();
+  }
+
+  Future<void> _refreshBattery() async {
+    final info = await _hostApi.getBatteryInfo();
+    setState(() => _batteryInfo = info);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: const Text('Pigeon Battery Monitor')),
       body: Center(
         child: Column(
-          mainAxisAlignment: .center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              _batteryLevel,
-              style: Theme.of(context).textTheme.headlineMedium,
+              _batteryInfo?.level == null ? '取得中...' : 'バッテリー残量: ${_batteryInfo?.level}%',
+              style: const TextStyle(fontSize: 24),
+            ),
+
+            Text(
+              '状態：${_batteryInfo?.state}',
+              style: const TextStyle(fontSize: 24),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _refreshBattery,
+              child: const Text('今すぐ更新'),
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _getBatteryLevel,
-        tooltip: 'バッテリーレベル取得',
-        child: const Icon(Icons.add),
       ),
     );
   }
